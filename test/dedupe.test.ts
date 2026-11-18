@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dedupeByContent, isAttachmentCopy } from "../server/dedupe";
+import { dedupeByContent, isAttachmentCopy, materializedFrom } from "../server/dedupe";
 import type { GalleryImage } from "../shared/gallery";
 
 function image(src: string, timestamp: string, kind: GalleryImage["kind"] = "file"): GalleryImage {
@@ -57,5 +57,49 @@ describe("dedupeByContent", () => {
   it("never treats a url as an attachment copy", () => {
     const images = [image("https://x/paseo-attachments-a/y.png", "1", "url")];
     expect(dedupeByContent(images, ["u"], "all")).toEqual(images);
+  });
+});
+
+describe("dedupeByContent with copyOf links", () => {
+  const links = new Map([[COPY, [REAL]]]);
+  it("drops a linked copy when its real file is shown, even with a new hash", () => {
+    const images = [image(COPY, "1"), image(REAL, "2")];
+    expect(dedupeByContent(images, ["old", "new"], "duplicates", links)).toEqual([images[1]]);
+  });
+  it("keeps the copy when the real file is gone", () => {
+    const images = [image(COPY, "1"), image(REAL, "2")];
+    expect(dedupeByContent(images, ["old", null], "duplicates", links)).toEqual([images[0]]);
+  });
+  it("keeps the copy when its linked file is not a candidate", () => {
+    const images = [image(COPY, "1")];
+    expect(dedupeByContent(images, ["old"], "duplicates", links)).toEqual(images);
+  });
+});
+
+describe("materializedFrom", () => {
+  const copy = (name: string) => `file:///tmp/paseo-attachments-x/${name}.png`;
+  const msg = (name: string) => ({ item: { type: "assistant_message", text: `\n\n![Image](${copy(name)})\n\n` } });
+  const read = (filePath: string) => ({ item: { type: "tool_call", name: "Read", detail: { type: "read", filePath } } });
+  const run = (entries: { item: { type: string; [k: string]: unknown } }[]) =>
+    materializedFrom(entries, "/work", "/home/u");
+
+  it("links a copy to the image read right before it", () => {
+    const links = run([read("/work/a.png"), msg("abc")]);
+    expect(links.get("/tmp/paseo-attachments-x/abc.png")).toEqual(["/work/a.png"]);
+  });
+  it("links every copy to every read in the run", () => {
+    const links = run([read("/work/a.png"), read("b.png"), msg("c1"), msg("c2")]);
+    expect(links.get("/tmp/paseo-attachments-x/c1.png")).toEqual(["/work/a.png", "/work/b.png"]);
+    expect(links.get("/tmp/paseo-attachments-x/c2.png")).toEqual(["/work/a.png", "/work/b.png"]);
+  });
+  it("does not link after a non-tool_call entry", () => {
+    const entries = [read("/work/a.png"), { item: { type: "user_message", text: "hi" } }, msg("abc")];
+    expect(run(entries).size).toBe(0);
+  });
+  it("ignores non-image reads, non-read tool calls and attachment copies as sources", () => {
+    const shell = { item: { type: "tool_call", name: "Bash", detail: { type: "shell", filePath: "/work/a.png" } } };
+    expect(run([read("/work/notes.txt"), msg("a")]).size).toBe(0);
+    expect(run([shell, msg("b")]).size).toBe(0);
+    expect(run([read("/tmp/paseo-attachments-y/z.png"), msg("c")]).size).toBe(0);
   });
 });

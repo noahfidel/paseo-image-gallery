@@ -22,10 +22,15 @@ The content dedupe in `listImages` then keeps the earliest appearance of each ha
 2. Get that image into the agent's chat (e.g. the agent reads the image), and mention its real path in a later message.
 3. Open the image gallery: the tile is captioned with the hash-named `paseo-attachments-*` path, not `1-AFTER-screen.png`.
 
+## When the real file changes later
+
+Content dedupe only works while the real file still matches the copy. If the agent edits the real file in place after reading it (for example adding a BEFORE/AFTER banner), its hash changes. The stale hash-named copy then no longer matches anything, so it stays in the gallery next to the edited file.
+
 ## Asks
 
 1. **Prefer the real path.** When several paths have the same content, keep the one outside `paseo-attachments-*`, and fall back to the attachments copy only when it is the only one.
 2. **A setting for attachment copies.** Let users hide images under `paseo-attachments-*`: either only when a copy of the same content exists elsewhere (suggested default, because sometimes the attachments copy is the only one left and hiding it would lose the image), or always.
-3. **Optional:** a per-tile Hide, so one stray image can be dismissed.
+3. **Tie a copy to its source.** The daemon emits the copy's image right after the tool call that read the real file, so link the copy to the file read by the tool call right before it and drop the copy while that file is shown. Better, have the daemon record the source path (for example in the alt text or item metadata) so plugins do not need to infer it.
+4. **Optional:** a per-tile Hide, so one stray image can be dismissed.
 
-A fork implements 1 and 2 (a pure `dedupeByContent` helper that prefers non-attachments paths, a host setting `attachmentCopies` with `duplicates` (default) and `all`, and vitest tests); happy to open a PR if useful.
+A fork implements 1 to 3 (a pure `dedupeByContent` helper that prefers non-attachments paths, a host setting `attachmentCopies` with `duplicates` (default) and `all`, and vitest tests); happy to open a PR if useful.

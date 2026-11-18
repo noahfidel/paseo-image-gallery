@@ -2,13 +2,12 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { extname, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { extname, join } from "node:path";
 import { promisify } from "node:util";
 import type { RpcInput } from "@getpaseo/plugin";
 import type { PluginHandlerContext, PluginSettings } from "@getpaseo/plugin/server";
 import type { AttachmentCopiesMode, GALLERY_SETTINGS, GalleryImage, listImagesRpc, readImageRpc, readThumbnailRpc } from "../shared/gallery";
-import { dedupeByContent } from "./dedupe";
+import { dedupeByContent, materializedFrom, normalize, type TimelineItem } from "./dedupe";
 
 const MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -58,9 +57,6 @@ function collect(value: unknown, source: string, out: Candidate[]): void {
   }
 }
 
-// The timeline item type lives in @getpaseo/protocol; match its shape loosely here.
-type TimelineItem = { type: string; [key: string]: unknown };
-
 function itemCandidates(item: TimelineItem): Candidate[] {
   const out: Candidate[] = [];
   switch (item.type) {
@@ -98,21 +94,6 @@ async function fileHash(path: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-function normalize(raw: string, cwd: string, home: string): Pick<GalleryImage, "src" | "kind"> | null {
-  const trimmed = raw.replace(/[.:]+$/, "");
-  if (/^https?:\/\//i.test(trimmed)) return { src: trimmed, kind: "url" };
-  if (/^file:\/\//i.test(trimmed)) {
-    try {
-      return { src: fileURLToPath(trimmed), kind: "file" };
-    } catch {
-      return null;
-    }
-  }
-  if (/^[a-z]+:/i.test(trimmed)) return null; // data: and other schemes
-  if (trimmed.startsWith("~/")) return { src: resolve(home, trimmed.slice(2)), kind: "file" };
-  return { src: isAbsolute(trimmed) ? resolve(trimmed) : resolve(cwd, trimmed), kind: "file" };
 }
 
 interface WorkspaceAgent {
@@ -162,7 +143,12 @@ async function agentCandidates(paseo: PluginHandlerContext["paseo"], agent: Work
       }
     }
   }
-  return [...seen.values()];
+  const copyOf = materializedFrom(
+    pages.flatMap(({ entries }) => entries as { item: TimelineItem }[]),
+    cwd,
+    home,
+  );
+  return { images: [...seen.values()], copyOf };
 }
 
 /** The saved setting, or "duplicates" when it is missing, invalid or unreadable. */
@@ -187,17 +173,21 @@ export async function listImages(
     agents.map((agent) =>
       agentCandidates(paseo, agent).catch((error) => {
         console.error(`Skipping agent ${agent.id}:`, error);
-        return [];
+        return { images: [] as GalleryImage[], copyOf: new Map<string, string[]>() };
       }),
     ),
   );
-  const candidates = perAgent.flat().sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  const copyOf = new Map<string, string[]>();
+  for (const agent of perAgent) {
+    for (const [copy, sources] of agent.copyOf) copyOf.set(copy, [...new Set([...(copyOf.get(copy) ?? []), ...sources])]);
+  }
+  const candidates = perAgent.flatMap((agent) => agent.images).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   const hashes = await Promise.all(
     candidates.map((image) => (image.kind === "url" ? image.src : fileHash(image.src))),
   );
   // The same image can appear under several paths and agents (Paseo also copies images shown
   // in chat into paseo-attachments-*); show it once, preferring the real file.
-  const images = dedupeByContent(candidates, hashes, await attachmentCopiesMode(settings));
+  const images = dedupeByContent(candidates, hashes, await attachmentCopiesMode(settings), copyOf);
   for (const image of images) if (image.kind === "file") allowedPaths.add(image.src);
   return { images };
 }
