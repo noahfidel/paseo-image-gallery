@@ -1,4 +1,4 @@
-import { defineRpc } from "@getpaseo/plugin";
+import { defineRpc, defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
 
 export const galleryImageSchema = z.object({
@@ -34,3 +34,15 @@ export const readThumbnailRpc = defineRpc({
   input: z.object({ path: z.string() }),
   output: z.object({ mimeType: z.string(), base64: z.string() }),
 });
+
+export const GALLERY_SETTINGS = defineSettings({
+  id: "gallery",
+  scope: "host",
+  version: 1,
+  schema: z.object({
+    /** What to do with the hash-named copies Paseo keeps of images shown in chat. */
+    attachmentCopies: z.enum(["duplicates", "all"]).default("duplicates"),
+  }),
+});
+
+export type AttachmentCopiesMode = z.output<typeof GALLERY_SETTINGS.schema>["attachmentCopies"];

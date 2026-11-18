@@ -6,8 +6,9 @@ import { extname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { RpcInput } from "@getpaseo/plugin";
-import type { PluginHandlerContext } from "@getpaseo/plugin/server";
-import type { GalleryImage, listImagesRpc, readImageRpc, readThumbnailRpc } from "../shared/gallery";
+import type { PluginHandlerContext, PluginSettings } from "@getpaseo/plugin/server";
+import type { AttachmentCopiesMode, GALLERY_SETTINGS, GalleryImage, listImagesRpc, readImageRpc, readThumbnailRpc } from "../shared/gallery";
+import { dedupeByContent } from "./dedupe";
 
 const MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -164,9 +165,22 @@ async function agentCandidates(paseo: PluginHandlerContext["paseo"], agent: Work
   return [...seen.values()];
 }
 
+/** The saved setting, or "duplicates" when it is missing, invalid or unreadable. */
+async function attachmentCopiesMode(
+  settings?: PluginSettings<typeof GALLERY_SETTINGS.schema>,
+): Promise<AttachmentCopiesMode> {
+  try {
+    const state = await settings?.read();
+    return state?.status === "ready" ? state.values.attachmentCopies : "duplicates";
+  } catch {
+    return "duplicates";
+  }
+}
+
 export async function listImages(
   { workspaceId }: RpcInput<typeof listImagesRpc>,
   { paseo }: PluginHandlerContext,
+  settings?: PluginSettings<typeof GALLERY_SETTINGS.schema>,
 ): Promise<{ images: GalleryImage[] }> {
   const agents = await workspaceAgents(paseo, workspaceId);
   const perAgent = await Promise.all(
@@ -181,15 +195,9 @@ export async function listImages(
   const hashes = await Promise.all(
     candidates.map((image) => (image.kind === "url" ? image.src : fileHash(image.src))),
   );
-  // The same image can appear under several paths and agents (Paseo also copies images an
-  // agent viewed into paseo-attachments); keep only its earliest appearance.
-  const seenHashes = new Set<string>();
-  const images = candidates.filter((_, index) => {
-    const hash = hashes[index];
-    if (hash === null || seenHashes.has(hash)) return false;
-    seenHashes.add(hash);
-    return true;
-  });
+  // The same image can appear under several paths and agents (Paseo also copies images shown
+  // in chat into paseo-attachments-*); show it once, preferring the real file.
+  const images = dedupeByContent(candidates, hashes, await attachmentCopiesMode(settings));
   for (const image of images) if (image.kind === "file") allowedPaths.add(image.src);
   return { images };
 }

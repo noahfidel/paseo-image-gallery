@@ -1,5 +1,6 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { GalleryPanel } from "./client/gallery";
+import { GallerySettings } from "./client/settings";
 
 export default function contribute(client: PluginClientContext) {
   // Workspace panels are listed in the Explorer "+" menu.
@@ -9,6 +10,12 @@ export default function contribute(client: PluginClientContext) {
     icon: "Images",
     locations: ["explorer"],
     Component: GalleryPanel,
+  });
+  client.addSettingsScreen({
+    id: "gallery",
+    title: "Image gallery",
+    icon: "Images",
+    Component: GallerySettings,
   });
   client.addCommandCenterItem({
     id: "open-gallery",
