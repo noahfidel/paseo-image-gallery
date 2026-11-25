@@ -262,13 +262,22 @@ export async function listImages(
     for (const [copy, sources] of agent.copyOf) copyOf.set(copy, [...new Set([...(copyOf.get(copy) ?? []), ...sources])]);
   }
   const candidates = perAgent.flatMap((agent) => agent.images).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  const hashes = await mapLimit(candidates, HASH_CONCURRENCY, async (image) => {
-    if (image.kind !== "url") return fileHash(image.src);
-    const media = await probeMedia(image.src);
-    if (!media) return null;
-    image.media = media;
-    return image.src;
-  });
+  // Only local hashing is limited; web-link probes wait on the network, so they all run at once.
+  const fileIndexes = candidates.flatMap((image, index) => (image.kind === "url" ? [] : [index]));
+  const [fileHashes, urlHashes] = await Promise.all([
+    mapLimit(fileIndexes, HASH_CONCURRENCY, (index) => fileHash(candidates[index].src)),
+    Promise.all(
+      candidates.map(async (image) => {
+        if (image.kind !== "url") return null;
+        const media = await probeMedia(image.src);
+        if (!media) return null;
+        image.media = media;
+        return image.src;
+      }),
+    ),
+  ]);
+  const hashes = urlHashes;
+  fileIndexes.forEach((index, i) => (hashes[index] = fileHashes[i]));
   // The same image can appear under several paths and agents (Paseo also copies images shown
   // in chat into paseo-attachments-*); show it once, preferring the real file.
   const deduped = dedupeByContent(candidates, hashes, await attachmentCopiesMode(settings), copyOf);

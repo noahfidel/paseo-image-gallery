@@ -117,6 +117,23 @@ describe("listImages web links", () => {
     const methods = fetchMock.mock.calls.filter(([url]) => url.endsWith("/head405.png")).map(([, init]) => init?.method);
     expect(methods).toEqual(["HEAD", "GET"]);
   });
+
+  it("probes every link at once instead of a few at a time", async () => {
+    let started = 0;
+    let release!: () => void;
+    const allStarted = new Promise<void>((resolve) => (release = resolve));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        if (++started === 6) release();
+        await allStarted;
+        return response(200, "image/png");
+      }),
+    );
+    const text = Array.from({ length: 6 }, (_, i) => `![i](https://x.test/${i}.png)`).join("\n");
+    const { images } = await listImages({ workspaceId: "w" }, textContext(text));
+    expect(images).toHaveLength(6);
+  });
 });
 
 function multiContext(entries: unknown[], cwd = "/tmp") {
