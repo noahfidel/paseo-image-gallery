@@ -197,6 +197,25 @@ describe("listImages video web links", () => {
   });
 });
 
+describe("readChunk limits", () => {
+  it("clamps length to the chunk size and returns empty at offset === size", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "gallery-chunk-"));
+    const video = join(dir, "big.webm");
+    const size = VIDEO_CHUNK_BYTES + 1024;
+    await writeFile(video, Buffer.alloc(size, 7));
+    const entries = [
+      { timestamp: "2026-01-01T00:00:00Z", item: { type: "tool_call", name: "Read", detail: { type: "read", filePath: video } } },
+    ];
+    await listImages({ workspaceId: "w" }, multiContext(entries, dir));
+    const big = await readChunk({ path: video, offset: 0, length: size });
+    expect(Buffer.from(big.base64, "base64").length).toBe(VIDEO_CHUNK_BYTES);
+    expect(big.size).toBe(size);
+    const end = await readChunk({ path: video, offset: size, length: 10 });
+    expect(end.base64).toBe("");
+    expect(end.size).toBe(size);
+  });
+});
+
 describe("readChunk", () => {
   it("returns the requested slice and whole-file size, and refuses unlisted and image paths", async () => {
     const dir = await mkdtemp(join(tmpdir(), "gallery-chunk-"));

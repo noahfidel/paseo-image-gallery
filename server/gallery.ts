@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { constants, createReadStream } from "node:fs";
 import { mkdir, open, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
@@ -122,6 +122,22 @@ async function fileHash(path: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+const HASH_CONCURRENCY = 4;
+
+/** Like Promise.all(items.map(fn)), but runs at most `limit` calls at a time; keeps result order. */
+async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 const URL_FAILURE_TTL_MS = 5 * 60 * 1000;
@@ -246,15 +262,13 @@ export async function listImages(
     for (const [copy, sources] of agent.copyOf) copyOf.set(copy, [...new Set([...(copyOf.get(copy) ?? []), ...sources])]);
   }
   const candidates = perAgent.flatMap((agent) => agent.images).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  const hashes = await Promise.all(
-    candidates.map(async (image) => {
-      if (image.kind !== "url") return fileHash(image.src);
-      const media = await probeMedia(image.src);
-      if (!media) return null;
-      image.media = media;
-      return image.src;
-    }),
-  );
+  const hashes = await mapLimit(candidates, HASH_CONCURRENCY, async (image) => {
+    if (image.kind !== "url") return fileHash(image.src);
+    const media = await probeMedia(image.src);
+    if (!media) return null;
+    image.media = media;
+    return image.src;
+  });
   // The same image can appear under several paths and agents (Paseo also copies images shown
   // in chat into paseo-attachments-*); show it once, preferring the real file.
   const deduped = dedupeByContent(candidates, hashes, await attachmentCopiesMode(settings), copyOf);
@@ -289,9 +303,12 @@ function checkVideo(path: string) {
 /** One slice of a listed video, at most VIDEO_CHUNK_BYTES; empty when the offset is past the end. */
 export async function readChunk({ path, offset, length }: RpcInput<typeof readChunkRpc>) {
   const mimeType = checkVideo(path);
-  const handle = await open(path, "r");
+  // O_NONBLOCK keeps opening a FIFO that replaced the file from waiting for a writer.
+  const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
   try {
-    const { size } = await handle.stat();
+    const info = await handle.stat();
+    if (!info.isFile()) throw new Error(`Not a regular file: ${path}`);
+    const { size } = info;
     const wanted = Math.min(length, VIDEO_CHUNK_BYTES, Math.max(0, size - offset));
     if (wanted === 0) return { mimeType, size, base64: "" };
     const buffer = Buffer.alloc(wanted);
