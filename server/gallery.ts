@@ -96,6 +96,36 @@ async function fileHash(path: string): Promise<string | null> {
   }
 }
 
+const URL_FAILURE_TTL_MS = 5 * 60 * 1000;
+/** Whether a web link loaded as an image: successes are kept, failures are retried after a while. */
+const urlCache = new Map<string, { ok: boolean; checkedAt: number }>();
+
+async function probeUrl(url: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const options = { redirect: "follow", signal: controller.signal } as const;
+    let res = await fetch(url, { method: "HEAD", ...options });
+    if (res.status === 405 || res.status === 501) {
+      res = await fetch(url, { method: "GET", ...options });
+      await res.body?.cancel();
+    }
+    return res.ok && (res.headers.get("content-type") ?? "").toLowerCase().startsWith("image/");
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function urlIsImage(url: string): Promise<boolean> {
+  const cached = urlCache.get(url);
+  if (cached && (cached.ok || Date.now() - cached.checkedAt < URL_FAILURE_TTL_MS)) return cached.ok;
+  const ok = await probeUrl(url);
+  urlCache.set(url, { ok, checkedAt: Date.now() });
+  return ok;
+}
+
 interface WorkspaceAgent {
   id: string;
   title: string;
@@ -183,7 +213,9 @@ export async function listImages(
   }
   const candidates = perAgent.flatMap((agent) => agent.images).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   const hashes = await Promise.all(
-    candidates.map((image) => (image.kind === "url" ? image.src : fileHash(image.src))),
+    candidates.map(async (image) =>
+      image.kind === "url" ? ((await urlIsImage(image.src)) ? image.src : null) : fileHash(image.src),
+    ),
   );
   // The same image can appear under several paths and agents (Paseo also copies images shown
   // in chat into paseo-attachments-*); show it once, preferring the real file.
