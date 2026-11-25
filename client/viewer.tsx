@@ -206,12 +206,14 @@ export function Viewer({
   const [pinned, setPinned] = useState(!hoverable);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
+  const [measureFailed, setMeasureFailed] = useState(false);
   const [scale, setScale] = useState<number | null>(null);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
 
   // Reset zoom and position for each image.
   useEffect(() => {
     setNatural(null);
+    setMeasureFailed(false);
     setScale(null);
     setOffset({ x: 0, y: 0 });
   }, [image.src]);
@@ -219,7 +221,12 @@ export function Viewer({
   useEffect(() => {
     if (!uri) return;
     let current = true;
-    Image.getSize(uri, (width, height) => current && setNatural({ width, height }));
+    setMeasureFailed(false);
+    Image.getSize(
+      uri,
+      (width, height) => current && setNatural({ width, height }),
+      () => current && setMeasureFailed(true),
+    );
     return () => {
       current = false;
     };
@@ -327,6 +334,8 @@ export function Viewer({
             <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
               {error ? (
                 <Text style={{ color: theme.colors.statusDanger }}>{error.message}</Text>
+              ) : measureFailed ? (
+                <Text style={{ color: theme.colors.statusDanger }}>Couldn't load this image</Text>
               ) : (
                 <ActivityIndicator color={theme.colors.foregroundMuted} />
               )}
