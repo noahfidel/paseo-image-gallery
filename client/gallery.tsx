@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { ActivityIndicator, Image, Pressable, Text, View } from "react-native";
 import { type GalleryImage, listImagesRpc } from "../shared/gallery";
 import { fileName, useImageUri } from "./image";
+import { countLabel } from "./media";
 import { Viewer } from "./viewer";
 
 type Theme = PluginWorkspacePanelProps["theme"];
@@ -41,7 +42,10 @@ function Thumbnail({
           justifyContent: "center",
         }}
       >
-        {uri ? (
+        {image.media === "video" ? (
+          // No poster frame: that would mean loading every video just to draw the grid.
+          <Icon name="Film" size={28} color={theme.colors.foregroundMuted} />
+        ) : uri ? (
           <Image source={{ uri }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
         ) : loading ? (
           <ActivityIndicator color={theme.colors.foregroundMuted} />
@@ -56,7 +60,7 @@ function Thumbnail({
   );
 }
 
-/** Every image from the agents of one workspace, opened from the Explorer "+" menu, /gallery, or ⌘K. */
+/** Every image and video from the agents of one workspace, opened from the Explorer "+" menu, /gallery, or ⌘K. */
 export function GalleryPanel({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {
   const status = useWorkspace(workspaceId, (workspace) => workspace.status);
   const listImages = useRpc(listImagesRpc);
@@ -104,7 +108,7 @@ export function GalleryPanel({ theme, layout, workspaceId }: PluginWorkspacePane
     <View style={styles.root} onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
       <View style={styles.header}>
         <Text style={styles.title}>
-          {gallery.data ? `${images.length} image${images.length === 1 ? "" : "s"}` : "Images"}
+          {gallery.data ? countLabel(images) : "Images"}
         </Text>
         <Pressable
           accessibilityRole="button"
@@ -125,10 +129,10 @@ export function GalleryPanel({ theme, layout, workspaceId }: PluginWorkspacePane
         </View>
       ) : gallery.data && images.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={styles.title}>No images in this workspace yet</Text>
+          <Text style={styles.title}>No images or videos in this workspace yet</Text>
           <Text style={styles.muted}>
-            Images appear here when an agent reads, writes, or links an image file, or when you
-            upload one.
+            Images and videos appear here when an agent reads, writes, or links an image or video
+            file, or when you upload one.
           </Text>
         </View>
       ) : (

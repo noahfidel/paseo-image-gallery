@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import type { GalleryImage } from "../shared/gallery";
 import { fileName, useImageUri } from "./image";
+import { VideoPlayer } from "./video";
 import { hasWindowButtons, onKeyDown } from "./web";
 
 type Theme = PluginWorkspacePanelProps["theme"];
@@ -181,6 +182,8 @@ export function Viewer({
   onClose: () => void;
 }) {
   const image = images[index];
+  const isVideo = image.media === "video";
+  // Always null for a video, so the measuring below never runs for one.
   const { uri, error } = useImageUri(image);
   const hoverable = layout.platform === "web";
 
@@ -316,32 +319,39 @@ export function Viewer({
           setViewport({ width, height });
         }}
       >
-        <View style={{ flex: 1, overflow: "hidden" }} {...pan.panHandlers}>
-          {uri && natural ? (
-            <Image
-              source={{ uri }}
-              accessibilityLabel={fileName(image.src)}
-              style={{
-                position: "absolute",
-                width: displayed.width,
-                height: displayed.height,
-                left: (viewport.width - displayed.width) / 2 + offset.x,
-                top: (viewport.height - displayed.height) / 2 + offset.y,
-              }}
-              resizeMode="stretch"
-            />
-          ) : (
-            <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-              {error ? (
-                <Text style={{ color: theme.colors.statusDanger }}>{error.message}</Text>
-              ) : measureFailed ? (
-                <Text style={{ color: theme.colors.statusDanger }}>Couldn't load this image</Text>
-              ) : (
-                <ActivityIndicator color={theme.colors.foregroundMuted} />
-              )}
-            </View>
-          )}
-        </View>
+        {isVideo ? (
+          // Inset by the bars so hovering them never covers the video's own controls.
+          <View style={{ flex: 1, marginVertical: BAR }}>
+            <VideoPlayer key={image.src} video={image} theme={theme} label={fileName(image.src)} />
+          </View>
+        ) : (
+          <View style={{ flex: 1, overflow: "hidden" }} {...pan.panHandlers}>
+            {uri && natural ? (
+              <Image
+                source={{ uri }}
+                accessibilityLabel={fileName(image.src)}
+                style={{
+                  position: "absolute",
+                  width: displayed.width,
+                  height: displayed.height,
+                  left: (viewport.width - displayed.width) / 2 + offset.x,
+                  top: (viewport.height - displayed.height) / 2 + offset.y,
+                }}
+                resizeMode="stretch"
+              />
+            ) : (
+              <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+                {error ? (
+                  <Text style={{ color: theme.colors.statusDanger }}>{error.message}</Text>
+                ) : measureFailed ? (
+                  <Text style={{ color: theme.colors.statusDanger }}>Couldn't load this image</Text>
+                ) : (
+                  <ActivityIndicator color={theme.colors.foregroundMuted} />
+                )}
+              </View>
+            )}
+          </View>
+        )}
 
         <HoverZone
           zone="top"
@@ -357,7 +367,7 @@ export function Viewer({
             <Text style={muted}>
               {index + 1} / {images.length}
             </Text>
-            {zoomed ? (
+            {isVideo ? null : zoomed ? (
               <ToolButton
                 icon="Minimize2"
                 label="Reset" compact={layout.compact}
