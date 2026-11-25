@@ -3,7 +3,7 @@ import { dedupeByContent, isAttachmentCopy, materializedFrom } from "../server/d
 import type { GalleryImage } from "../shared/gallery";
 
 function image(src: string, timestamp: string, kind: GalleryImage["kind"] = "file"): GalleryImage {
-  return { src, kind, source: "Read", timestamp, agentId: "a", agentTitle: "Agent" };
+  return { src, kind, media: "image", source: "Read", timestamp, agentId: "a", agentTitle: "Agent" };
 }
 
 const COPY = "/var/folders/xx/T/paseo-attachments-abc123/9e342c7f.png";
@@ -77,8 +77,10 @@ describe("dedupeByContent with copyOf links", () => {
 });
 
 describe("materializedFrom", () => {
-  const copy = (name: string) => `file:///tmp/paseo-attachments-x/${name}.png`;
-  const msg = (name: string) => ({ item: { type: "assistant_message", text: `\n\n![Image](${copy(name)})\n\n` } });
+  const copy = (name: string, ext = "png") => `file:///tmp/paseo-attachments-x/${name}.${ext}`;
+  const msg = (name: string, ext = "png") => ({
+    item: { type: "assistant_message", text: `\n\n![Image](${copy(name, ext)})\n\n` },
+  });
   const read = (filePath: string) => ({ item: { type: "tool_call", name: "Read", detail: { type: "read", filePath } } });
   const run = (entries: { item: { type: string; [k: string]: unknown } }[]) =>
     materializedFrom(entries, "/work", "/home/u");
@@ -95,6 +97,10 @@ describe("materializedFrom", () => {
   it("does not link after a non-tool_call entry", () => {
     const entries = [read("/work/a.png"), { item: { type: "user_message", text: "hi" } }, msg("abc")];
     expect(run(entries).size).toBe(0);
+  });
+  it("links a paseo-attachments video copy to the video read before it", () => {
+    const links = run([read("/work/clip.webm"), msg("vid", "mp4")]);
+    expect(links.get("/tmp/paseo-attachments-x/vid.mp4")).toEqual(["/work/clip.webm"]);
   });
   it("ignores non-image reads, non-read tool calls and attachment copies as sources", () => {
     const shell = { item: { type: "tool_call", name: "Bash", detail: { type: "shell", filePath: "/work/a.png" } } };

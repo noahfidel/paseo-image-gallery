@@ -10,7 +10,7 @@ export function isAttachmentCopy(path: string): boolean {
 // The timeline item type lives in @getpaseo/protocol; match its shape loosely here.
 export type TimelineItem = { type: string; [key: string]: unknown };
 
-const IMAGE_EXT = /\.(?:png|jpe?g|gif|webp|bmp|svg)$/i;
+const MEDIA_EXT = /\.(?:png|jpe?g|gif|webp|bmp|svg|webm|mp4|mov|m4v)$/i;
 const MARKDOWN_IMAGE = /!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
 
 export function normalize(raw: string, cwd: string, home: string): Pick<GalleryImage, "src" | "kind"> | null {
@@ -59,7 +59,7 @@ export function materializedFrom(
     const sources: string[] = [];
     for (; i >= 0 && entries[i].item.type === "tool_call"; i--) {
       const detail = entries[i].item.detail as { type?: string; filePath?: string } | undefined;
-      if (detail?.type !== "read" || !detail.filePath || !IMAGE_EXT.test(detail.filePath)) continue;
+      if (detail?.type !== "read" || !detail.filePath || !MEDIA_EXT.test(detail.filePath)) continue;
       const n = normalize(detail.filePath, cwd, home);
       if (n?.kind === "file" && !isAttachmentCopy(n.src) && !sources.includes(n.src)) sources.unshift(n.src);
     }

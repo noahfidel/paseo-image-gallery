@@ -5,6 +5,8 @@ export const galleryImageSchema = z.object({
   /** Absolute local path on the daemon machine, or an http(s) URL. */
   src: z.string(),
   kind: z.enum(["file", "url"]),
+  /** Whether the item is an image or a video; older payloads without it are images. */
+  media: z.enum(["image", "video"]).default("image"),
   /** Where the image was found in the timeline, e.g. "Read", "user upload", "markdown". */
   source: z.string(),
   /** Timestamp of the timeline entry where the image first appeared. */
@@ -29,6 +31,17 @@ export const readImageRpc = defineRpc({
   output: z.object({ mimeType: z.string(), base64: z.string() }),
 });
 
+/** Videos play from chunks of this size, so a single RPC never carries a whole file. */
+export const VIDEO_CHUNK_BYTES = 4 * 1024 * 1024;
+/** Largest video the viewer will play; bigger ones are listed but not loaded. */
+export const MAX_VIDEO_BYTES = 200 * 1024 * 1024;
+
+/** One slice of a listed video file; `size` is the whole file's size. */
+export const readChunkRpc = defineRpc({
+  name: "gallery.read-chunk",
+  input: z.object({ path: z.string(), offset: z.number().int().min(0), length: z.number().int().positive() }),
+  output: z.object({ mimeType: z.string(), size: z.number(), base64: z.string() }),
+});
 
 /** A small copy for grid thumbnails; falls back to the original image when it cannot resize. */
 export const readThumbnailRpc = defineRpc({

@@ -1,12 +1,22 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, open, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { promisify } from "node:util";
 import type { RpcInput } from "@getpaseo/plugin";
 import type { PluginHandlerContext, PluginSettings } from "@getpaseo/plugin/server";
-import type { AttachmentCopiesMode, GALLERY_SETTINGS, GalleryImage, listImagesRpc, readImageRpc, readThumbnailRpc } from "../shared/gallery";
+import {
+  VIDEO_CHUNK_BYTES,
+  type AttachmentCopiesMode,
+  type GALLERY_SETTINGS,
+  type GalleryImage,
+  type listImagesRpc,
+  type readChunkRpc,
+  type readImageRpc,
+  type readThumbnailRpc,
+} from "../shared/gallery";
 import { dedupeByContent, materializedFrom, normalize, type TimelineItem } from "./dedupe";
 
 const MIME_TYPES: Record<string, string> = {
@@ -18,7 +28,23 @@ const MIME_TYPES: Record<string, string> = {
   ".bmp": "image/bmp",
   ".svg": "image/svg+xml",
 };
-const EXT = "png|jpe?g|gif|webp|bmp|svg";
+const VIDEO_MIME_TYPES: Record<string, string> = {
+  ".webm": "video/webm",
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".mov": "video/quicktime",
+};
+const IMAGE_EXT = "png|jpe?g|gif|webp|bmp|svg";
+const VIDEO_EXT = "webm|mp4|mov|m4v";
+const EXT = `${IMAGE_EXT}|${VIDEO_EXT}`;
+
+type Media = GalleryImage["media"];
+
+/** The media a path or URL claims to be, from its extension (query string ignored). */
+function mediaOf(src: string): Media {
+  const clean = src.replace(/[?#].*$/, "");
+  return new RegExp(String.raw`\.(?:${VIDEO_EXT})$`, "i").test(clean) ? "video" : "image";
+}
 const PAGE_SIZE = 500;
 const MAX_BYTES = 25 * 1024 * 1024;
 
@@ -81,14 +107,16 @@ function itemCandidates(item: TimelineItem): Candidate[] {
   return out;
 }
 
-/** Content hash of a readable image file, or null when it is missing or too large. */
+/** Content hash of a readable file, or null when it is missing (or an image is too large). */
 async function fileHash(path: string): Promise<string | null> {
   try {
     const info = await stat(path);
-    if (!info.isFile() || info.size > MAX_BYTES) return null;
+    if (!info.isFile() || (mediaOf(path) === "image" && info.size > MAX_BYTES)) return null;
     const cached = hashCache.get(path);
     if (cached && cached.size === info.size && cached.mtimeMs === info.mtimeMs) return cached.hash;
-    const hash = createHash("sha1").update(await readFile(path)).digest("hex");
+    const hasher = createHash("sha1");
+    for await (const chunk of createReadStream(path)) hasher.update(chunk);
+    const hash = hasher.digest("hex");
     hashCache.set(path, { size: info.size, mtimeMs: info.mtimeMs, hash });
     return hash;
   } catch {
@@ -97,10 +125,10 @@ async function fileHash(path: string): Promise<string | null> {
 }
 
 const URL_FAILURE_TTL_MS = 5 * 60 * 1000;
-/** Whether a web link loaded as an image: successes are kept, failures are retried after a while. */
-const urlCache = new Map<string, { ok: boolean; checkedAt: number }>();
+/** What a web link loaded as (null when it did not load as an image or video): successes are kept, failures are retried after a while. */
+const urlCache = new Map<string, { media: Media | null; checkedAt: number }>();
 
-async function probeUrl(url: string): Promise<boolean> {
+async function probeUrl(url: string): Promise<Media | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
@@ -110,20 +138,25 @@ async function probeUrl(url: string): Promise<boolean> {
       res = await fetch(url, { method: "GET", ...options });
       await res.body?.cancel();
     }
-    return res.ok && (res.headers.get("content-type") ?? "").toLowerCase().startsWith("image/");
+    if (!res.ok) return null;
+    const type = (res.headers.get("content-type") ?? "").toLowerCase();
+    // The content type wins over the extension when they disagree.
+    if (type.startsWith("image/")) return "image";
+    if (type.startsWith("video/")) return "video";
+    return null;
   } catch {
-    return false;
+    return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function urlIsImage(url: string): Promise<boolean> {
+async function probeMedia(url: string): Promise<Media | null> {
   const cached = urlCache.get(url);
-  if (cached && (cached.ok || Date.now() - cached.checkedAt < URL_FAILURE_TTL_MS)) return cached.ok;
-  const ok = await probeUrl(url);
-  urlCache.set(url, { ok, checkedAt: Date.now() });
-  return ok;
+  if (cached && (cached.media || Date.now() - cached.checkedAt < URL_FAILURE_TTL_MS)) return cached.media;
+  const media = await probeUrl(url);
+  urlCache.set(url, { media, checkedAt: Date.now() });
+  return media;
 }
 
 interface WorkspaceAgent {
@@ -165,6 +198,7 @@ async function agentCandidates(paseo: PluginHandlerContext["paseo"], agent: Work
         if (!normalized || seen.has(normalized.src)) continue;
         seen.set(normalized.src, {
           ...normalized,
+          media: mediaOf(normalized.src),
           source: candidate.source,
           timestamp: entry.timestamp,
           agentId: agent.id,
@@ -213,9 +247,13 @@ export async function listImages(
   }
   const candidates = perAgent.flatMap((agent) => agent.images).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   const hashes = await Promise.all(
-    candidates.map(async (image) =>
-      image.kind === "url" ? ((await urlIsImage(image.src)) ? image.src : null) : fileHash(image.src),
-    ),
+    candidates.map(async (image) => {
+      if (image.kind !== "url") return fileHash(image.src);
+      const media = await probeMedia(image.src);
+      if (!media) return null;
+      image.media = media;
+      return image.src;
+    }),
   );
   // The same image can appear under several paths and agents (Paseo also copies images shown
   // in chat into paseo-attachments-*); show it once, preferring the real file.
@@ -236,6 +274,32 @@ function checkAllowed(path: string) {
   const mimeType = MIME_TYPES[extname(path).toLowerCase()];
   if (!mimeType) throw new Error(`Unsupported image type: ${path}`);
   return mimeType;
+}
+
+/** Listed video files only; gallery.read and gallery.thumbnail never serve these. */
+function checkVideo(path: string) {
+  if (!allowedPaths.has(path)) {
+    throw new Error("This path is not a video from a session. Refresh the gallery.");
+  }
+  const mimeType = VIDEO_MIME_TYPES[extname(path).toLowerCase()];
+  if (!mimeType) throw new Error(`Unsupported video type: ${path}`);
+  return mimeType;
+}
+
+/** One slice of a listed video, at most VIDEO_CHUNK_BYTES; empty when the offset is past the end. */
+export async function readChunk({ path, offset, length }: RpcInput<typeof readChunkRpc>) {
+  const mimeType = checkVideo(path);
+  const handle = await open(path, "r");
+  try {
+    const { size } = await handle.stat();
+    const wanted = Math.min(length, VIDEO_CHUNK_BYTES, Math.max(0, size - offset));
+    if (wanted === 0) return { mimeType, size, base64: "" };
+    const buffer = Buffer.alloc(wanted);
+    const { bytesRead } = await handle.read(buffer, 0, wanted, offset);
+    return { mimeType, size, base64: buffer.subarray(0, bytesRead).toString("base64") };
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function readImage({ path }: RpcInput<typeof readImageRpc>) {
