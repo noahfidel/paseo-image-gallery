@@ -11,6 +11,8 @@ export const galleryImageSchema = z.object({
   timestamp: z.string(),
   agentId: z.string(),
   agentTitle: z.string(),
+  /** Content hash of a local file; changes when the file is overwritten. */
+  hash: z.string().optional(),
 });
 
 export type GalleryImage = z.output<typeof galleryImageSchema>;

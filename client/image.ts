@@ -9,7 +9,7 @@ import { type GalleryImage, readImageRpc, readThumbnailRpc } from "../shared/gal
 export function useImageUri(image: GalleryImage, { thumbnail = false } = {}) {
   const readImage = useRpc(thumbnail ? readThumbnailRpc : readImageRpc);
   const query = useQuery({
-    queryKey: [thumbnail ? "gallery-thumbnail" : "gallery-image", image.src],
+    queryKey: [thumbnail ? "gallery-thumbnail" : "gallery-image", image.src, image.hash],
     queryFn: () => readImage({ path: image.src }),
     enabled: image.kind === "file",
     staleTime: Number.POSITIVE_INFINITY,

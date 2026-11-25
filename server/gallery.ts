@@ -187,7 +187,12 @@ export async function listImages(
   );
   // The same image can appear under several paths and agents (Paseo also copies images shown
   // in chat into paseo-attachments-*); show it once, preferring the real file.
-  const images = dedupeByContent(candidates, hashes, await attachmentCopiesMode(settings), copyOf);
+  const deduped = dedupeByContent(candidates, hashes, await attachmentCopiesMode(settings), copyOf);
+  const hashBySrc = new Map(candidates.map((image, index) => [image.src, hashes[index]]));
+  const images = deduped.map((image): GalleryImage => {
+    const hash = hashBySrc.get(image.src);
+    return image.kind === "file" && typeof hash === "string" ? { ...image, hash } : image;
+  });
   for (const image of images) if (image.kind === "file") allowedPaths.add(image.src);
   return { images };
 }
