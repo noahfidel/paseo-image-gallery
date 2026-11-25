@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { countLabel, decodeBase64, readVideo, videoTooLargeMessage } from "../client/media";
+import { countLabel, decodeBase64, readVideo, videoTooLargeMessage, viewerKeyAction } from "../client/media";
 import { MAX_VIDEO_BYTES, VIDEO_CHUNK_BYTES } from "../shared/gallery";
 
 const image = { media: "image" as const };
@@ -86,5 +86,20 @@ describe("readVideo", () => {
     const result = await readVideo(readChunk, "/v.mp4", () => false);
     expect(Buffer.concat(result?.parts ?? [])).toEqual(file.subarray(0, 4));
     expect(readChunk).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("viewerKeyAction", () => {
+  it("maps arrows to navigation and Escape to close", () => {
+    expect(viewerKeyAction("ArrowLeft", false)).toBe("previous");
+    expect(viewerKeyAction("ArrowRight", false)).toBe("next");
+    expect(viewerKeyAction("Escape", false)).toBe("close");
+    expect(viewerKeyAction("a", false)).toBeNull();
+  });
+
+  it("leaves arrows to a focused video but still closes on Escape", () => {
+    expect(viewerKeyAction("ArrowLeft", true)).toBeNull();
+    expect(viewerKeyAction("ArrowRight", true)).toBeNull();
+    expect(viewerKeyAction("Escape", true)).toBe("close");
   });
 });

@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import type { GalleryImage } from "../shared/gallery";
 import { fileName, useImageUri } from "./image";
+import { viewerKeyAction } from "./media";
 import { VideoPlayer } from "./video";
 import { hasWindowButtons, onKeyDown } from "./web";
 
@@ -288,11 +289,12 @@ export function Viewer({
   latestNav.current = { index, go, onClose };
   useEffect(
     () =>
-      onKeyDown((key) => {
+      onKeyDown((key, { inVideo }) => {
         const nav = latestNav.current;
-        if (key === "ArrowLeft") nav.go(nav.index - 1);
-        else if (key === "ArrowRight") nav.go(nav.index + 1);
-        else if (key === "Escape") nav.onClose();
+        const action = viewerKeyAction(key, inVideo);
+        if (action === "previous") nav.go(nav.index - 1);
+        else if (action === "next") nav.go(nav.index + 1);
+        else if (action === "close") nav.onClose();
         else return false;
         return true;
       }),

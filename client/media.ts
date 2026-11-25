@@ -60,3 +60,14 @@ export async function readVideo(
   }
   return { mimeType: first.mimeType, parts };
 }
+
+export type ViewerKeyAction = "previous" | "next" | "close";
+
+/** What a key press does in the viewer; arrows stay with a focused video so they seek it. */
+export function viewerKeyAction(key: string, inVideo: boolean): ViewerKeyAction | null {
+  if (key === "Escape") return "close";
+  if (inVideo) return null;
+  if (key === "ArrowLeft") return "previous";
+  if (key === "ArrowRight") return "next";
+  return null;
+}

@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 // This plugin typechecks without the DOM library. Declare only what this module uses.
 interface KeyEvent {
   key: string;
+  target: { tagName?: string } | null;
   preventDefault(): void;
 }
 declare const navigator: { userAgent: string };
@@ -13,12 +14,14 @@ declare const window: {
 
 /**
  * Calls `handler` for each key press on web and desktop. Return true to consume the key.
+ * `inVideo` is true when a video player has focus, so the handler can leave its keys alone.
  * Native platforms have no hardware keyboard events here, so this is a no-op there.
  */
-export function onKeyDown(handler: (key: string) => boolean): () => void {
+export function onKeyDown(handler: (key: string, context: { inVideo: boolean }) => boolean): () => void {
   if (Platform.OS !== "web") return () => {};
   const listener = (event: KeyEvent) => {
-    if (handler(event.key)) event.preventDefault();
+    const inVideo = event.target?.tagName === "VIDEO";
+    if (handler(event.key, { inVideo })) event.preventDefault();
   };
   window.addEventListener("keydown", listener);
   return () => window.removeEventListener("keydown", listener);
